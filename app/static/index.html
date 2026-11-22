@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>公交客流换基判定</title>
+<style>
+  :root {
+    --blue: #1f5fa8;
+    --bg: #f4f6fa;
+    --card: #ffffff;
+    --border: #d9dee7;
+    --text: #1d2733;
+    --muted: #66727f;
+    --rise: #1a7f37;
+    --fall: #b42318;
+    --warn: #b54708;
+    --conflict: #b42318;
+    --nobasis: #66727f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+      "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.55;
+  }
+  header {
+    background: var(--blue); color: #fff; padding: 20px 28px;
+  }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header p { margin: 0; opacity: .85; font-size: 13px; }
+  main { max-width: 1080px; margin: 24px auto 60px; padding: 0 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 22px; margin-bottom: 20px;
+  }
+  .card h2 { margin: 0 0 14px; font-size: 17px; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  button {
+    background: var(--blue); color: #fff; border: 0; border-radius: 7px;
+    padding: 9px 18px; font-size: 14px; cursor: pointer;
+  }
+  button.secondary { background: #5b6b7f; }
+  button:disabled { background: #a9b4c0; cursor: not-allowed; }
+  input[type="file"] { font-size: 13px; }
+  select, input[type="month"] {
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px;
+    font-size: 14px; min-width: 150px; background: #fff;
+  }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  .error-box {
+    background: #fef3f2; border: 1px solid #f2b8b5; color: #912018;
+    border-radius: 8px; padding: 12px 14px; font-size: 13.5px;
+  }
+  .error-box ul { margin: 6px 0 0; padding-left: 20px; }
+  .warn-box {
+    background: #fffaeb; border: 1px solid #fedf89; color: var(--warn);
+    border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-top: 10px;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; }
+  th { background: #f0f3f8; font-weight: 600; }
+  .versions { display: flex; flex-direction: column; gap: 8px; }
+  .version-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: #fbfcfe;
+  }
+  .version-item label { cursor: pointer; flex: 1; }
+  .version-item .meta { color: var(--muted); font-size: 12.5px; }
+  .verdict-banner {
+    border-radius: 10px; padding: 16px 20px; font-size: 16px; font-weight: 600;
+    margin-bottom: 14px;
+  }
+  .verdict-rise { background: #eafaf0; color: var(--rise); border: 1px solid #a6e4c0; }
+  .verdict-fall { background: #fef3f2; color: var(--fall); border: 1px solid #f2b8b5; }
+  .verdict-unknown { background: #f5f6f8; color: #344054; border: 1px solid var(--border); }
+  .verdict-no_basis { background: #f2f4f7; color: var(--nobasis); border: 1px solid var(--border); }
+  .verdict-conflict { background: #fef3f2; color: var(--conflict); border: 1px solid #f2b8b5; }
+  .chain-step {
+    border-left: 3px solid var(--blue); background: #f8fafd;
+    border-radius: 0 8px 8px 0; padding: 10px 14px; margin-bottom: 10px;
+    font-size: 13.5px;
+  }
+  .chain-step code { background: #eef2f7; padding: 1px 6px; border-radius: 4px; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .pill {
+    display: inline-block; padding: 1px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+  }
+  .pill-rise { background: #dcf5e5; color: var(--rise); }
+  .pill-fall { background: #fde4e1; color: var(--fall); }
+  .hidden { display: none; }
+  .samples button { margin-right: 8px; margin-top: 6px; }
+  .section-title { font-weight: 600; margin: 16px 0 8px; font-size: 14px; }
+  .interval { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <h1>公交客流月报 · 换基涨跌判定</h1>
+  <p>上传同口径月报 CSV（版号 / 基期月 / 统计月 / 公布指数），勾选版次并选定起止月份，
+     依据与两月相连的全部换基记录判定客流必涨、必跌或无法证实涨跌。</p>
+</header>
+<main>
+  <section class="card">
+    <h2>1. 数据载入</h2>
+    <div class="row">
+      <input type="file" id="fileInput" accept=".csv,text/csv" />
+      <button id="uploadBtn">上传 CSV</button>
+    </div>
+    <div class="samples">
+      <div class="hint">没有数据？可直接载入内置示例：</div>
+      <button class="secondary" data-sample="demo">示例：三版换基（可证实涨跌）</button>
+      <button class="secondary" data-sample="conflict">示例：记录互相矛盾</button>
+      <button class="secondary" data-sample="disconnected">示例：两月缺少换算关系</button>
+    </div>
+    <div id="uploadError" class="error-box hidden" style="margin-top:12px;"></div>
+    <div id="uploadWarnings" class="warn-box hidden"></div>
+    <div id="datasetMeta" class="hint" style="margin-top:10px;"></div>
+  </section>
+
+  <section class="card hidden" id="configCard">
+    <h2>2. 勾选版次并选定起止月份</h2>
+    <div class="section-title">版次（同一版基期为 100）</div>
+    <div class="versions" id="versionList"></div>
+    <div class="row" style="margin-top:16px;">
+      <div>
+        <div class="hint" style="margin:0 0 4px;">起月</div>
+        <select id="startMonth"></select>
+      </div>
+      <div>
+        <div class="hint" style="margin:0 0 4px;">止月</div>
+        <select id="endMonth"></select>
+      </div>
+      <button id="analyzeBtn" style="margin-top:14px;">判定涨跌</button>
+    </div>
+    <div id="analyzeError" class="error-box hidden" style="margin-top:12px;"></div>
+  </section>
+
+  <section class="card hidden" id="resultCard">
+    <h2>3. 判定结果</h2>
+    <div id="verdictBanner"></div>
+    <div id="resultBody"></div>
+  </section>
+</main>
+
+<script>
+const state = { datasetId: null, dataset: null };
+
+const $ = (id) => document.getElementById(id);
+
+function showError(el, errors) {
+  const list = Array.isArray(errors) ? errors : [String(errors)];
+  el.innerHTML = '<ul>' + list.map(e => `<li>${escapeHtml(e)}</li>`).join('') + '</ul>';
+  el.classList.remove('hidden');
+}
+function hideError(el) { el.classList.add('hidden'); el.innerHTML = ''; }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function verdictClass(v) { return 'verdict-banner verdict-' + v; }
+
+async function handleDatasetPayload(payload) {
+  state.datasetId = payload.dataset_id;
+  state.dataset = payload;
+  hideError($('uploadError'));
+  $('datasetMeta').textContent =
+    `已载入 ${payload.record_count} 条记录，覆盖 ${payload.months.length} 个月份、${payload.versions.length} 个版次。`;
+  const warnEl = $('uploadWarnings');
+  if (payload.warnings && payload.warnings.length) {
+    warnEl.innerHTML = payload.warnings.map(escapeHtml).join('<br>');
+    warnEl.classList.remove('hidden');
+  } else {
+    warnEl.classList.add('hidden');
+  }
+
+  const vl = $('versionList');
+  vl.innerHTML = '';
+  payload.versions.forEach((v, idx) => {
+    const div = document.createElement('div');
+    div.className = 'version-item';
+    div.innerHTML = `
+      <input type="checkbox" id="ver_${idx}" value="${escapeHtml(v.version)}" checked>
+      <label for="ver_${idx}">
+        <strong>${escapeHtml(v.version)}</strong>
+        <span class="meta">基期月 ${escapeHtml(v.base_month)} · ${v.record_count} 条记录</span>
+      </label>`;
+    vl.appendChild(div);
+  });
+
+  const sm = $('startMonth'), em = $('endMonth');
+  sm.innerHTML = ''; em.innerHTML = '';
+  payload.months.forEach(m => {
+    sm.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`);
+    em.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`);
+  });
+  if (payload.months.length >= 2) {
+    sm.value = payload.months[0];
+    em.value = payload.months[payload.months.length - 1];
+  }
+  $('configCard').classList.remove('hidden');
+  $('resultCard').classList.add('hidden');
+}
+
+$('uploadBtn').addEventListener('click', async () => {
+  const f = $('fileInput').files[0];
+  if (!f) { showError($('uploadError'), ['请先选择 CSV 文件']); return; }
+  hideError($('uploadError'));
+  const fd = new FormData();
+  fd.append('file', f);
+  try {
+    const resp = await fetch('/api/upload', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) { showError($('uploadError'), data.errors || data.detail || ['上传失败']); return; }
+    handleDatasetPayload(data);
+  } catch (e) { showError($('uploadError'), ['网络错误：' + e.message]); }
+});
+
+document.querySelectorAll('button[data-sample]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    hideError($('uploadError'));
+    try {
+      const resp = await fetch(`/api/samples/${btn.dataset.sample}/load`, { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok) { showError($('uploadError'), data.errors || data.detail || ['示例载入失败']); return; }
+      handleDatasetPayload(data);
+    } catch (e) { showError($('uploadError'), ['网络错误：' + e.message]); }
+  });
+});
+
+$('analyzeBtn').addEventListener('click', async () => {
+  hideError($('analyzeError'));
+  const versions = [...document.querySelectorAll('#versionList input:checked')].map(i => i.value);
+  if (!versions.length) { showError($('analyzeError'), ['请至少勾选一个版次']); return; }
+  const body = {
+    dataset_id: state.datasetId,
+    versions,
+    start_month: $('startMonth').value,
+    end_month: $('endMonth').value,
+  };
+  try {
+    const resp = await fetch('/api/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const errs = typeof data.detail === 'string' ? [data.detail] : (data.detail?.errors || ['判定失败']);
+      showError($('analyzeError'), errs); return;
+    }
+    renderResult(data);
+  } catch (e) { showError($('analyzeError'), ['网络错误：' + e.message]); }
+});
+
+function renderResult(res) {
+  $('resultCard').classList.remove('hidden');
+  const banner = $('verdictBanner');
+  banner.className = verdictClass(res.verdict);
+  banner.textContent = `${res.start_month} → ${res.end_month}：${res.verdict_label}`;
+
+  const body = $('resultBody');
+  let html = `<p>${escapeHtml(res.message)}</p>`;
+  html += `<p class="muted">勾选版次：${res.selected_versions.map(escapeHtml).join('、')}
+           ｜参与判定的相连记录：${res.used_record_count} 条</p>`;
+
+  if ((res.verdict === 'rise' || res.verdict === 'fall') && res.chain.length) {
+    html += '<div class="section-title">足以证明结论的源记录链（按月份顺序）</div>';
+    res.chain.forEach((st, i) => {
+      html += `
+      <div class="chain-step">
+        第 ${i + 1} 步 · CSV 第 <strong>${st.row_no}</strong> 行
+        （版号 ${escapeHtml(st.version)}，基期月 ${st.base_month}，统计月 ${st.stat_month}，公布指数 ${st.published_index}）<br>
+        由该条同版记录的指数区间（公布值 ±0.5）推出
+        <code>F(${st.to_month}) / F(${st.from_month})</code>
+        ∈ <span class="interval">[${st.ratio_low}, ${st.ratio_high}]</span>
+        ，证明取最不利的${st.bound_kind === 'upper' ? '上界' : '下界'}
+      </div>`;
+    });
+    const lo = res.product_low, hi = res.product_high;
+    html += `<p>各步最不利界连乘：<code>F(${res.end_month}) / F(${res.start_month})
+             ${res.verdict === 'fall' ? '≤' : '≥'} ${res.verdict === 'fall' ? hi : lo}</code>，
+             该值 <strong>${res.verdict === 'fall' ? '&lt; 1' : '&gt; 1'}</strong>，
+             故客流${res.verdict === 'fall' ? '必跌' : '必涨'}。
+             （完整可行区间为 [${lo}, ${hi}]）</p>`;
+  }
+
+  if (res.verdict === 'unknown') {
+    html += `<div class="section-title">可行比值区间</div>
+      <p class="interval">F(${res.end_month}) / F(${res.start_month})
+      ∈ [${res.ratio_low}, ${res.ratio_high}]，区间包含 1：
+      存在支持上涨的真值，也存在支持下跌的真值，无法证实涨跌。</p>`;
+  }
+
+  if (res.verdict === 'conflict' && res.conflicts.length) {
+    html += '<div class="section-title">一组无法共存的记录（负权环）</div>';
+    html += '<table><thead><tr><th>CSV 行号</th><th>版号</th><th>基期月</th><th>统计月</th><th>公布指数</th></tr></thead><tbody>';
+    res.conflicts.forEach(r => {
+      html += `<tr><td>${r.row_no}</td><td>${escapeHtml(r.version)}</td>
+               <td>${r.base_month}</td><td>${r.stat_month}</td><td>${r.published_index}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    html += '<p class="muted">这些记录各自给出的比值区间连乘后没有公共解，判定已暂停；请核对源数据后重试。</p>';
+  }
+
+  if (res.verdict === 'no_basis') {
+    html += '<p class="muted">提示：换基记录必须通过“同版统计月—基期月”关系首尾相连，'
+      + '请检查勾选的版次是否覆盖连接两个月份所需的全部换基版本。</p>';
+  }
+  body.innerHTML = html;
+}
+</script>
+</body>
+</html>
