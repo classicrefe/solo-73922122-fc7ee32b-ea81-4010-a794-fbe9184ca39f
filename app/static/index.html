@@ -93,6 +93,38 @@
   .samples button { margin-right: 8px; margin-top: 6px; }
   .section-title { font-weight: 600; margin: 16px 0 8px; font-size: 14px; }
   .interval { font-variant-numeric: tabular-nums; }
+  .months { display: flex; flex-wrap: wrap; gap: 8px; }
+  .months label {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px;
+    border: 1px solid var(--border); border-radius: 999px; background: #fbfcfe;
+    font-size: 13px; cursor: pointer;
+  }
+  input[type="text"] {
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px;
+    font-size: 14px; min-width: 220px; background: #fff;
+  }
+  .summary-item {
+    display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: #fbfcfe;
+    margin-bottom: 8px;
+  }
+  .summary-item label { cursor: pointer; flex: 1; }
+  .summary-item .meta { color: var(--muted); font-size: 12.5px; }
+  .summary-item .tag {
+    background: #eef2f7; color: #344054; border-radius: 5px;
+    padding: 1px 7px; font-size: 11.5px; margin-left: 6px;
+  }
+  .exact {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: #eef2f7; padding: 1px 6px; border-radius: 4px; font-size: 12.5px;
+  }
+  .status-ok { border-left: 4px solid var(--rise); }
+  .status-no_basis { border-left: 4px solid var(--nobasis); }
+  .status-conflict { border-left: 4px solid var(--conflict); }
+  .merge-banner {
+    border-radius: 10px; padding: 14px 18px; font-size: 15px; font-weight: 600;
+    margin-bottom: 12px;
+  }
 </style>
 </head>
 <body>
@@ -141,6 +173,64 @@
     <h2>3. 判定结果</h2>
     <div id="verdictBanner"></div>
     <div id="resultBody"></div>
+  </section>
+
+  <section class="card hidden" id="exportCard">
+    <h2>4. 导出换基摘要（移交下一批次）</h2>
+    <p class="muted" style="margin-top:0;">
+      摘要只包含所选月份及其两两之间的<strong>精确比值闭区间</strong>（以分数表示，
+      如 <code>46361/44600</code>）。换算可以经过未移交的月份，但导出前后，
+      所选月份可同时成立的客流比例组合完全一致。若与任一所选月相连的源记录有矛盾，
+      将拒绝导出并列出冲突记录。
+    </p>
+    <div class="section-title">要移交的月份（可多选）</div>
+    <div class="months" id="exportMonths"></div>
+    <div class="row" style="margin-top:14px;">
+      <div>
+        <div class="hint" style="margin:0 0 4px;">摘要名称（可选）</div>
+        <input type="text" id="exportName" placeholder="例如：2021 年批次摘要" />
+      </div>
+      <button id="exportBtn" style="margin-top:14px;">导出摘要</button>
+      <button id="exportSelectAll" class="secondary" style="margin-top:14px;">全选月份</button>
+    </div>
+    <div id="exportError" class="error-box hidden" style="margin-top:12px;"></div>
+    <div id="exportBody" style="margin-top:14px;"></div>
+  </section>
+
+  <section class="card" id="mergeCard">
+    <h2>5. 接收方：上传摘要并按共有月份拼接查询</h2>
+    <p class="muted" style="margin-top:0;">
+      接收方可脱离原始月报，上传一至两份同口径摘要。系统按共有月份拼接约束，
+      给出止月相对起月的<strong>精确比值范围</strong>；原先单份摘要就能查询的范围
+      也会在新约束下重新计算。两月不通时提示缺依据；连通但所在分量存在矛盾时
+      停止换算，并指出冲突涉及的摘要与月对。
+    </p>
+    <div class="row">
+      <input type="file" id="summaryFile" accept=".json,application/json" />
+      <button id="summaryUploadBtn">上传摘要</button>
+      <button id="summaryRefreshBtn" class="secondary">刷新摘要清单</button>
+    </div>
+    <div class="hint">
+      没有文件？载入内置摘要示例：
+      <button class="secondary sample-summary" data-summary-sample="demo_first">2020—2021 批次</button>
+      <button class="secondary sample-summary" data-summary-sample="demo_second">2021—2022 批次</button>
+      <button class="secondary sample-summary" data-summary-sample="demo_conflict">口径异常的 2021 摘要</button>
+      <button class="secondary sample-summary" data-summary-sample="demo_far">2024 年独立摘要</button>
+    </div>
+    <div id="summaryError" class="error-box hidden" style="margin-top:12px;"></div>
+    <div id="summaryList" style="margin-top:14px;"></div>
+    <div class="row" style="margin-top:14px;">
+      <div>
+        <div class="hint" style="margin:0 0 4px;">起月</div>
+        <select id="mergeStart"></select>
+      </div>
+      <div>
+        <div class="hint" style="margin:0 0 4px;">止月</div>
+        <select id="mergeEnd"></select>
+      </div>
+      <button id="mergeBtn" style="margin-top:14px;">拼接查询</button>
+    </div>
+    <div id="mergeBody" style="margin-top:14px;"></div>
   </section>
 </main>
 
@@ -200,7 +290,23 @@ async function handleDatasetPayload(payload) {
     em.value = payload.months[payload.months.length - 1];
   }
   $('configCard').classList.remove('hidden');
+  $('exportCard').classList.remove('hidden');
   $('resultCard').classList.add('hidden');
+  $('exportBody').innerHTML = '';
+  hideError($('exportError'));
+  renderExportMonths(payload.months);
+}
+
+function renderExportMonths(months) {
+  const box = $('exportMonths');
+  box.innerHTML = '';
+  months.forEach((m, idx) => {
+    const label = document.createElement('label');
+    label.innerHTML = `
+      <input type="checkbox" id="export_m_${idx}" value="${escapeHtml(m)}" checked>
+      ${escapeHtml(m)}`;
+    box.appendChild(label);
+  });
 }
 
 $('uploadBtn').addEventListener('click', async () => {
@@ -309,6 +415,354 @@ function renderResult(res) {
   }
   body.innerHTML = html;
 }
+
+// ------------------------------------------------------------------------- //
+// 换基摘要：导出
+// ------------------------------------------------------------------------- //
+
+function selectedVersions() {
+  return [...document.querySelectorAll('#versionList input:checked')].map(i => i.value);
+}
+function selectedExportMonths() {
+  return [...document.querySelectorAll('#exportMonths input:checked')].map(i => i.value);
+}
+
+$('exportSelectAll').addEventListener('click', () => {
+  const boxes = [...document.querySelectorAll('#exportMonths input')];
+  const allChecked = boxes.every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allChecked; });
+});
+
+$('exportBtn').addEventListener('click', async () => {
+  hideError($('exportError'));
+  $('exportBody').innerHTML = '';
+  const versions = selectedVersions();
+  if (!versions.length) { showError($('exportError'), ['请至少勾选一个版次']); return; }
+  const months = selectedExportMonths();
+  if (!months.length) { showError($('exportError'), ['请至少选择一个要移交的月份']); return; }
+  try {
+    const resp = await fetch('/api/summaries/export', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dataset_id: state.datasetId,
+        versions,
+        months,
+        name: $('exportName').value.trim() || null,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      if (data.conflicts && data.conflicts.length) {
+        renderExportConflict(data);
+      } else {
+        showError($('exportError'), [data.error || data.detail || '导出失败']);
+      }
+      return;
+    }
+    renderExportSummary(data);
+  } catch (e) { showError($('exportError'), ['网络错误：' + e.message]); }
+});
+
+function renderExportConflict(data) {
+  const el = $('exportError');
+  let html = `<div><strong>${escapeHtml(data.error || '拒绝导出')}</strong></div>`;
+  if (data.conflicts && data.conflicts.length) {
+    html += '<table style="margin-top:8px;"><thead><tr><th>CSV 行号</th><th>版号</th>'
+      + '<th>基期月</th><th>统计月</th><th>公布指数</th></tr></thead><tbody>';
+    data.conflicts.forEach(r => {
+      html += `<tr><td>${r.row_no}</td><td>${escapeHtml(r.version)}</td>`
+        + `<td>${r.base_month}</td><td>${r.stat_month}</td><td>${r.published_index}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  }
+  el.innerHTML = html;
+  el.classList.remove('hidden');
+}
+
+function renderExportSummary(summary) {
+  let html = `<div class="section-title">摘要内容（${summary.months.length} 个月份，`
+    + `${summary.pairs.length} 个月对）</div>`;
+  html += `<p class="muted">摘要名称：${escapeHtml(summary.name)} ｜ `
+    + `生成时间：${escapeHtml(summary.created_at)} ｜ `
+    + `容差：${escapeHtml(summary.tolerance)}（同口径）</p>`;
+  html += '<div class="months" style="margin-bottom:10px;">'
+    + summary.months.map(m => `<span class="exact">${escapeHtml(m)}</span>`).join(' ')
+    + '</div>';
+
+  if (!summary.pairs.length) {
+    html += '<p class="muted">所选月份之间没有相连的换基记录，摘要不含任何月对区间；'
+      + '接收方查询这些月份时会得到“缺少换算依据”。</p>';
+  } else {
+    html += '<table><thead><tr><th>月对</th><th>精确比值区间</th>'
+      + '<th>下界（小数）</th><th>上界（小数）</th></tr></thead><tbody>';
+    summary.pairs.forEach(p => {
+      const lo = approx(summary, p, 'low');
+      const hi = approx(summary, p, 'high');
+      html += `<tr>
+        <td>F(<strong>${escapeHtml(p.to)}</strong>) / F(<strong>${escapeHtml(p.from)}</strong>)</td>
+        <td>[<span class="exact">${escapeHtml(p.low)}</span>,
+            <span class="exact">${escapeHtml(p.high)}</span>]</td>
+        <td class="interval">${lo}</td><td class="interval">${hi}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    html += '<p class="muted" style="margin-top:8px;">精确区间以分数形式移交；'
+      + '小数仅为展示近似。接收方按共有月份拼接后，将得到与原始月报一致的可行比例组合。</p>';
+  }
+
+  const filename = (summary.name || 'summary').replace(/[\\/:*?"<>|\s]+/g, '_') + '.json';
+  html += `<div class="row" style="margin-top:12px;">`
+    + `<button id="downloadSummaryBtn">下载摘要 JSON</button>`
+    + `<button id="queryThisBtn" class="secondary">在下方拼接查询中使用</button></div>`;
+  $('exportBody').innerHTML = html;
+
+  $('downloadSummaryBtn').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(summary, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  $('queryThisBtn').addEventListener('click', async () => {
+    try {
+      const resp = await fetch('/api/summaries/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(summary),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        showError($('summaryError'), data.detail?.errors || ['登记摘要失败']);
+        return;
+      }
+      selectSummary(data.summary_id);
+      await refreshSummaries();
+      $('mergeCard').scrollIntoView({ behavior: 'smooth' });
+    } catch (e) { showError($('summaryError'), ['网络错误：' + e.message]); }
+  });
+}
+
+function approx(summary, pair, side) {
+  // 使用后端已给出的精确分数，前端的十进制仅作参考展示
+  const f = side === 'low' ? pair.low : pair.high;
+  const [num, den] = f.includes('/') ? f.split('/').map(Number) : [Number(f), 1];
+  return (num / den).toFixed(9);
+}
+
+// ------------------------------------------------------------------------- //
+// 换基摘要：接收方拼接查询
+// ------------------------------------------------------------------------- //
+
+const mergeState = { summaries: [], selected: new Set() };
+
+async function refreshSummaries() {
+  const resp = await fetch('/api/summaries');
+  const data = await resp.json();
+  mergeState.summaries = data.summaries || [];
+  const known = new Set(mergeState.summaries.map(s => s.summary_id));
+  mergeState.selected.forEach(id => { if (!known.has(id)) mergeState.selected.delete(id); });
+  renderSummaryList();
+  renderMergeMonthOptions();
+}
+
+// 新载入/上传的摘要自动加入选择（最多两份），方便直接演示拼接
+function selectSummary(summaryId) {
+  if (!summaryId || mergeState.selected.has(summaryId)) return;
+  if (mergeState.selected.size >= 2) {
+    const oldest = [...mergeState.selected][0];
+    mergeState.selected.delete(oldest);
+  }
+  mergeState.selected.add(summaryId);
+}
+
+function renderSummaryList() {
+  const box = $('summaryList');
+  if (!mergeState.summaries.length) {
+    box.innerHTML = '<p class="muted">尚未上传摘要。请上传 JSON 摘要，或载入上方内置示例。</p>';
+    return;
+  }
+  let html = '<div class="section-title">已上传摘要（勾选一至两份参与拼接）</div>';
+  mergeState.summaries.forEach(s => {
+    const checked = mergeState.selected.has(s.summary_id) ? 'checked' : '';
+    const months = s.months.map(escapeHtml).join('、');
+    html += `<div class="summary-item">
+      <input type="checkbox" class="summary-check" data-id="${escapeHtml(s.summary_id)}" ${checked}>
+      <label>
+        <strong>${escapeHtml(s.name)}</strong>
+        <span class="tag">${escapeHtml(s.summary_id)}</span>
+        <div class="meta">月份：${months}</div>
+        <div class="meta">${s.pair_count} 个月对 ｜ 容差 ${escapeHtml(s.tolerance)} ｜ ${escapeHtml(s.created_at || '—')}</div>
+      </label>
+      <button class="secondary summary-delete" data-id="${escapeHtml(s.summary_id)}" style="padding:5px 10px;font-size:12px;">移除</button>
+    </div>`;
+  });
+  box.innerHTML = html;
+
+  document.querySelectorAll('.summary-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        if (mergeState.selected.size >= 2) {
+          cb.checked = false;
+          showError($('summaryError'), ['最多同时选择两份摘要进行拼接']);
+          return;
+        }
+        mergeState.selected.add(cb.dataset.id);
+      } else {
+        mergeState.selected.delete(cb.dataset.id);
+      }
+      hideError($('summaryError'));
+      renderMergeMonthOptions();
+    });
+  });
+  document.querySelectorAll('.summary-delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/summaries/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+      mergeState.selected.delete(btn.dataset.id);
+      await refreshSummaries();
+    });
+  });
+}
+
+function renderMergeMonthOptions() {
+  const chosen = mergeState.summaries.filter(s => mergeState.selected.has(s.summary_id));
+  const months = [...new Set(chosen.flatMap(s => s.months))].sort();
+  const sm = $('mergeStart'), em = $('mergeEnd');
+  const prevS = sm.value, prevE = em.value;
+  sm.innerHTML = ''; em.innerHTML = '';
+  if (!months.length) {
+    sm.innerHTML = '<option value="">（先选择摘要）</option>';
+    em.innerHTML = '<option value="">（先选择摘要）</option>';
+    $('mergeBtn').disabled = true;
+    return;
+  }
+  $('mergeBtn').disabled = false;
+  months.forEach(m => {
+    sm.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`);
+    em.insertAdjacentHTML('beforeend', `<option value="${m}">${m}</option>`);
+  });
+  sm.value = months.includes(prevS) ? prevS : months[0];
+  em.value = months.includes(prevE) ? prevE : months[months.length - 1];
+}
+$('summaryUploadBtn').addEventListener('click', async () => {
+  hideError($('summaryError'));
+  const f = $('summaryFile').files[0];
+  if (!f) { showError($('summaryError'), ['请先选择摘要 JSON 文件']); return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  try {
+    const resp = await fetch('/api/summaries/upload', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) { showError($('summaryError'), data.errors || data.detail || ['上传失败']); return; }
+    selectSummary(data.summary_id);
+    await refreshSummaries();
+  } catch (e) { showError($('summaryError'), ['网络错误：' + e.message]); }
+});
+
+$('summaryRefreshBtn').addEventListener('click', refreshSummaries);
+
+document.querySelectorAll('button[data-summary-sample]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    hideError($('summaryError'));
+    try {
+      const resp = await fetch(`/api/summary-samples/${btn.dataset.summarySample}/load`, { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok) { showError($('summaryError'), data.detail?.errors || ['示例载入失败']); return; }
+      selectSummary(data.summary_id);
+      await refreshSummaries();
+    } catch (e) { showError($('summaryError'), ['网络错误：' + e.message]); }
+  });
+});
+
+$('mergeBtn').addEventListener('click', async () => {
+  $('mergeBody').innerHTML = '';
+  hideError($('summaryError'));
+  const ids = [...mergeState.selected];
+  if (ids.length < 1) { showError($('summaryError'), ['请至少选择一份摘要']); return; }
+  try {
+    const resp = await fetch('/api/summaries/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        summary_ids: ids,
+        start_month: $('mergeStart').value,
+        end_month: $('mergeEnd').value,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showError($('summaryError'), typeof data.detail === 'string' ? [data.detail]
+        : (data.detail?.errors || ['查询失败']));
+      return;
+    }
+    renderMergeResult(data);
+  } catch (e) { showError($('summaryError'), ['网络错误：' + e.message]); }
+});
+
+const MERGE_STATUS_LABEL = {
+  ok: '换算成功',
+  no_basis: '缺少换算依据',
+  conflict: '摘要存在矛盾',
+};
+
+function renderMergeResult(res) {
+  const body = $('mergeBody');
+  let tone = res.status;
+  if (res.status === 'ok') {
+    tone = res.verdict === 'rise' ? 'rise' : (res.verdict === 'fall' ? 'fall' : 'unknown');
+  }
+  let html = `<div class="merge-banner verdict-${tone} status-${res.status}">`
+    + `${escapeHtml(res.start_month)} → ${escapeHtml(res.end_month)}：`
+    + `${MERGE_STATUS_LABEL[res.status] || res.status}</div>`;
+  html += `<p>${escapeHtml(res.message)}</p>`;
+
+  if (res.status === 'ok') {
+    html += `<div class="section-title">合并约束下的精确比值范围</div>
+      <p>F(<strong>${escapeHtml(res.end_month)}</strong>) / F(<strong>${escapeHtml(res.start_month)}</strong>)
+      ∈ [<span class="exact">${escapeHtml(res.ratio_low)}</span>,
+         <span class="exact">${escapeHtml(res.ratio_high)}</span>]
+      <span class="muted">（≈ [${res.ratio_low_decimal}, ${res.ratio_high_decimal}]）</span></p>`;
+  }
+
+  if (res.conflicts && res.conflicts.length) {
+    html += '<div class="section-title">冲突涉及的摘要与月对</div>';
+    html += '<table><thead><tr><th>摘要</th><th>摘要 ID</th><th>月对</th>'
+      + '</tr></thead><tbody>';
+    res.conflicts.forEach(c => {
+      html += `<tr><td>${escapeHtml(c.summary_name || '—')}</td>
+        <td><span class="exact">${escapeHtml(c.summary_id || '—')}</span></td>
+        <td>F(${escapeHtml(c.to_month)}) / F(${escapeHtml(c.from_month)})</td></tr>`;
+    });
+    html += '</tbody></table>';
+    html += '<p class="muted">这些摘要区间连乘后没有公共解，已停止换算；请核对口径后重试。</p>';
+  }
+
+  // 原先就能查询的范围也重算展示
+  if (res.single_bounds && res.single_bounds.length) {
+    html += '<div class="section-title">各份摘要单独可查范围（合并前，供对照）</div>';
+    html += '<table><thead><tr><th>摘要</th><th>单独状态</th><th>合并前单独区间</th></tr></thead><tbody>';
+    res.single_bounds.forEach(sb => {
+      let range = '—';
+      if (sb.status === 'ok') {
+        range = `[<span class="exact">${escapeHtml(sb.ratio_low)}</span>, `
+          + `<span class="exact">${escapeHtml(sb.ratio_high)}</span>]`;
+      } else {
+        range = `<span class="muted">${escapeHtml(sb.message || sb.status)}</span>`;
+      }
+      html += `<tr><td>${escapeHtml(sb.summary_name)}</td>`
+        + `<td>${escapeHtml(MERGE_STATUS_LABEL[sb.status] || sb.status)}</td>`
+        + `<td>${range}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    if (res.status === 'ok') {
+      html += res.tightening
+        ? '<p class="muted">合并后的区间比任一份单独摘要可给出的范围更紧；'
+          + '上方结果已按合并约束重新计算，而不是沿用任一份旧结果。</p>'
+        : '<p class="muted">即使原先某份摘要单独就能查询这两个月，上方结果也已'
+          + '按合并约束重新计算（本组数据下区间未进一步收窄）。</p>';
+    }
+  }
+  body.innerHTML = html;
+}
+
+refreshSummaries();
 </script>
 </body>
 </html>

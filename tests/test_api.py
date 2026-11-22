@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import SAMPLE_FILES, app
@@ -125,3 +125,201 @@ def test_records_endpoint():
 def test_all_sample_files_present():
     for key, path in SAMPLE_FILES.items():
         assert path.exists(), f"示例 {key} 缺失：{path}"
+
+
+# --------------------------------------------------------------------------- #
+# 换基摘要：导出 / 上传 / 拼接查询
+# --------------------------------------------------------------------------- #
+
+DEMO_VERSIONS = ["V2020", "V2021", "V2022"]
+
+
+def load_demo_dataset() -> str:
+    return client.post("/api/samples/demo/load").json()["dataset_id"]
+
+
+def test_export_endpoint_returns_exact_pairs_and_download():
+    dataset_id = load_demo_dataset()
+    resp = client.post(
+        "/api/summaries/export",
+        json={
+            "dataset_id": dataset_id,
+            "versions": DEMO_VERSIONS,
+            "months": ["2020-07", "2021-07", "2022-07"],
+            "name": "测试摘要",
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["format"] == "bus-transfer-summary"
+    assert payload["months"] == ["2020-07", "2021-07", "2022-07"]
+    assert len(payload["pairs"]) == 3
+    for pair in payload["pairs"]:
+        assert "/" in pair["low"] and "/" in pair["high"]  # 精确有理数
+    cross = next(
+        p for p in payload["pairs"]
+        if (p["from"], p["to"]) == ("2020-07", "2022-07")
+    )
+    assert cross["low"] == "46361/44600"
+    assert cross["high"] == "47241/44200"
+
+
+def test_export_endpoint_rejects_conflicting_records():
+    dataset_id = client.post("/api/samples/conflict/load").json()["dataset_id"]
+    resp = client.post(
+        "/api/summaries/export",
+        json={
+            "dataset_id": dataset_id,
+            "versions": ["VA", "VB"],
+            "months": ["2023-01", "2023-06"],
+        },
+    )
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert "拒绝导出" in payload["error"]
+    assert {c["row_no"] for c in payload["conflicts"]} >= {3, 5}
+
+
+def test_export_endpoint_validation():
+    dataset_id = load_demo_dataset()
+    resp = client.post(
+        "/api/summaries/export",
+        json={"dataset_id": dataset_id, "versions": [], "months": ["2020-07"]},
+    )
+    assert resp.status_code == 422
+    resp = client.post(
+        "/api/summaries/export",
+        json={"dataset_id": dataset_id, "versions": DEMO_VERSIONS, "months": []},
+    )
+    assert resp.status_code == 422
+    resp = client.post(
+        "/api/summaries/export",
+        json={"dataset_id": "nope", "versions": DEMO_VERSIONS, "months": ["2020-07"]},
+    )
+    assert resp.status_code == 404
+
+
+def _export(dataset_id: str, months: list[str], name: str) -> dict:
+    resp = client.post(
+        "/api/summaries/export",
+        json={
+            "dataset_id": dataset_id,
+            "versions": DEMO_VERSIONS,
+            "months": months,
+            "name": name,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_upload_register_and_query_merged_summaries():
+    dataset_id = load_demo_dataset()
+    first = _export(dataset_id, ["2020-07", "2021-01", "2021-07"], "A")
+    second = _export(dataset_id, ["2021-07", "2022-01", "2022-07"], "B")
+
+    up = client.post(
+        "/api/summaries/upload",
+        files={"file": ("a.json", first_bytes := json.dumps(first).encode(), "application/json")},
+    )
+    assert up.status_code == 200, up.text
+    assert first_bytes
+    reg = client.post("/api/summaries/register", json=second)
+    assert reg.status_code == 200
+    ids = [up.json()["summary_id"], reg.json()["summary_id"]]
+
+    listed = client.get("/api/summaries").json()
+    assert listed["max_for_query"] == 2
+    assert {s["summary_id"] for s in listed["summaries"]} >= set(ids)
+
+    resp = client.post(
+        "/api/summaries/query",
+        json={"summary_ids": ids, "start_month": "2020-07", "end_month": "2022-07"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "ok"
+    assert payload["verdict"] == "rise"
+    assert payload["ratio_low"] == "16317/15833"
+    assert len(payload["single_bounds"]) == 2
+
+
+def test_query_reports_no_basis_for_unconnected_summaries():
+    client.post("/api/summary-samples/demo_first/load")
+    client.post("/api/summary-samples/demo_far/load")
+    resp = client.post(
+        "/api/summaries/query",
+        json={
+            "summary_ids": ["demo-first", "demo-far"],
+            "start_month": "2020-07",
+            "end_month": "2024-06",
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "no_basis"
+    assert "共有月份" in payload["message"]
+
+
+def test_query_stops_on_conflict_and_names_summaries_and_pairs():
+    client.post("/api/summary-samples/demo_first/load")
+    client.post("/api/summary-samples/demo_conflict/load")
+    resp = client.post(
+        "/api/summaries/query",
+        json={
+            "summary_ids": ["demo-first", "demo-conflict"],
+            "start_month": "2020-07",
+            "end_month": "2021-07",
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "conflict"
+    assert "停止换算" in payload["message"]
+    names = {c["summary_name"] for c in payload["conflicts"]}
+    assert names == {"2020—2021 批次摘要", "口径异常的 2021 摘要"}
+    assert ("2021-01", "2021-07") in {
+        (c["from_month"], c["to_month"]) for c in payload["conflicts"]
+    }
+
+
+def test_query_requires_one_or_two_summaries():
+    resp = client.post(
+        "/api/summaries/query",
+        json={"summary_ids": [], "start_month": "2020-07", "end_month": "2021-07"},
+    )
+    assert resp.status_code == 422
+    resp = client.post(
+        "/api/summaries/query",
+        json={"summary_ids": ["no-such-summary"], "start_month": "2020-07", "end_month": "2021-07"},
+    )
+    assert resp.status_code == 404
+
+
+def test_upload_summary_rejects_bad_json_and_bad_format():
+    resp = client.post(
+        "/api/summaries/upload",
+        files={"file": ("bad.json", b"{not json", "application/json")},
+    )
+    assert resp.status_code == 422
+    assert "errors" in resp.json()
+
+    bad = {"format": "wrong", "format_version": 1}
+    resp = client.post(
+        "/api/summaries/upload",
+        files={"file": ("bad.json", json.dumps(bad).encode(), "application/json")},
+    )
+    assert resp.status_code == 422
+    assert any("format" in e for e in resp.json()["errors"])
+
+
+def test_summary_samples_present():
+    listing = client.get("/api/summary-samples").json()
+    assert set(listing) == {"demo_first", "demo_second", "demo_conflict", "demo_far"}
+    assert all(item["available"] for item in listing.values())
+
+
+def test_delete_summary():
+    client.post("/api/summary-samples/demo_first/load")
+    assert client.delete("/api/summaries/demo-first").status_code == 200
+    assert client.delete("/api/summaries/demo-first").status_code == 404
